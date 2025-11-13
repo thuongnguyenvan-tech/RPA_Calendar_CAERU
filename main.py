@@ -80,6 +80,34 @@ def check_calendar_days(calendar_html, schedule, current_year, month):
             results.append(False)
     return results
 
+def find_day_category(day_str, schedule):
+    for key, days in schedule.items():
+        if day_str in days:
+            return key
+    return None
+
+def get_click_count(td_html: str, target_status: str):
+    if "pink_holiday" in td_html:
+        current_status = "red_days"
+    elif "blue_holiday" in td_html:
+        current_status = "blue_days"
+    else:
+        current_status = "black_days"
+
+    states = ["red_days", "blue_days", "black_days"]
+
+    # Tính số bước để đến trạng thái mong muốn (theo vòng xoay)
+    current_idx = states.index(current_status)
+    target_idx = states.index(target_status)
+
+    clicks = (target_idx - current_idx) % len(states)
+    if clicks == 1:
+        return day_cell.click()
+    elif clicks == 2:
+        return day_cell.dblclick()
+    else:
+        return "Error!"
+
 if __name__ == '__main__':
     ADMIN = "admin"
     PASSWORD = "solomon"
@@ -146,6 +174,7 @@ if __name__ == '__main__':
                     "blue_days": blue_days,
                     "black_days": black_days
                 }
+                
     master_schedule = {k: dict(v) for k, v in master_schedule.items()}
 
     with open("master_schedule.txt", "w", encoding="utf-8") as f:
@@ -161,14 +190,18 @@ if __name__ == '__main__':
         page.wait_for_load_state("domcontentloaded")
         page.goto(URL + "calendar", wait_until="domcontentloaded")
 
-        #Click AREA tổng quát
-        page.click('p.button > a.btn_gray:nth-of-type(1)')
-        page.wait_for_timeout(3000)
+        # #Click AREA tổng quát
+        # page.click('p.button > a.btn_gray:nth-of-type(1)')
+        # page.wait_for_timeout(3000)
 
         master_schedule = dict(islice(master_schedule.items(), 5))
 
+        first_loop = True
         for area_ID, schedule in master_schedule.items():
-            page.locator('a.modal-open.btn_gray', has_text="変更").click()
+            if not first_loop:
+                page.locator('a.modal-open.btn_gray', has_text="変更").click()
+            else:
+                first_loop = False
             input_locator = page.locator('div.search_setting:has(span:text-is("勤務地ID")) input')
             input_locator.fill(area_ID)
             input_locator.press("Enter")
@@ -189,6 +222,8 @@ if __name__ == '__main__':
                     except Exception as e:
                         print(f"Không có {type_day} ở tháng thứ {month}")
 
+                # page.pause()
+                
                 calendar_html = current_calendar.inner_html()
                 td_list = extract_td_tags(calendar_html)[7:]
 
@@ -198,7 +233,15 @@ if __name__ == '__main__':
                     print(f"Tháng {month}: Error!")
                     for index, day in enumerate(result):
                         if day == False:
-                            print(f"Lỗi ở ngày {index}")
+                            print(f"Lỗi ở ngày {index+1}")
+                            current_error_day_status = td_list[index]
+                            # print(current_error_day_status)
+                            date_str = f"{current_year}-{month:02d}-{int(index+1):02d}"
+                            target = find_day_category(date_str, schedule[current_year][month])
+                            day_cell = current_calendar.locator(f'td.pointable:text-is("{int(index+1)}")')
+                            get_click_count(current_error_day_status, target)
+                            print(f"Đã sửa ngày {index+1} thành {target}")
+                            # print(target)
                 else:
                     print(f"Tháng {month}: OK!")
 
@@ -206,4 +249,8 @@ if __name__ == '__main__':
                 # temp_result = get_code_output(CHECK_PROMPT(td_list, schedule[current_year][month]))
                 # CODE = get_result_from_json(temp_result)
                 # print(f"CODE: {CODE}")
-            page.pause()
+                page.pause()
+                # Tìm và click vào nút 保存 bên trong tháng 1
+                save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
+                save_button.click()
+

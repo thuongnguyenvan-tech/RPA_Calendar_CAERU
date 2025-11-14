@@ -110,17 +110,8 @@ def get_click_count(td_html: str, target_status: str):
         return "Error!"
 
 def extract_info_from_info_sheet(df):
-    """
-    Nhận df (kết quả pd.read_excel(..., sheet_name='情報'))
-    Trả về dict: {'URL': str, '管理者ID': str, 'password': str, 'year': [int,...]}
-
-    Nếu key không tồn tại, giá trị tương ứng là None.
-    """
-    # Chuẩn hoá: bỏ khoảng trắng ở tên cột nếu có
     df = df.copy()
     df.columns = [c.strip() for c in df.columns]
-
-    # Dùng set_index để lookup nhanh (nếu có duplicate, giữ first)
     info_map = df.set_index('name')['value'].to_dict()
 
     def get(key):
@@ -158,7 +149,6 @@ def extract_info_from_info_sheet(df):
 
 def extract_weekend_days(tr_html_list, year_month):
     result = {"blue_days": [], "red_days": [], "black_days": []}
-
     table = [] 
     for tr_html in tr_html_list:
         soup = BeautifulSoup(tr_html, "html.parser")
@@ -168,7 +158,6 @@ def extract_weekend_days(tr_html_list, year_month):
             text = td.get_text(strip=True)
             row.append(text)
         table.append(row)
-    
     for weekday in table[1:]:
         for index, value in enumerate(weekday):
             if value != '' and index == 0:
@@ -180,20 +169,28 @@ def extract_weekend_days(tr_html_list, year_month):
     return result
 
 def update_day_patterns(A, B):
-
     holidays = set(A.get("red_days", []))
     leave_days = set(A.get("blue_days", []))
     work_days = set(A.get("black_days", []))
     sundays = set(B.get("red_days", []))
     saturdays = set(B.get("blue_days", []))
     normal_days = set(B.get("black_days", []))
-
-    # Cập nhật trực tiếp A
     A["red_days"] = sorted((sundays | holidays) - work_days)
     A["blue_days"] = sorted((saturdays | leave_days) - work_days - holidays)
     A["black_days"] = sorted((normal_days | work_days)- leave_days - holidays) 
-
     return A
+
+def generate_year_click_code(target_year: int, current_year: int):
+    # if not (2000 <= target_year <= 2100) or not (2000 <= current_year <= 2100):
+    #     return "# Lỗi: year ngoài giới hạn 2000-2100"
+    diff = target_year - current_year
+    if diff == 0:
+        return 0
+    if diff > 0:
+        clicks = "\n".join(["button.nth(1).click()" for _ in range(diff)])
+    elif diff < 0:
+        clicks = "\n".join(["button.first.click()" for _ in range(abs(diff))])
+    return clicks
 
 if __name__ == '__main__':
     file_path = "ISUZU_template.xlsx"
@@ -202,8 +199,6 @@ if __name__ == '__main__':
     sheet2 = pd.read_excel(file_path, sheet_name='法定休日')
     sheet3 = pd.read_excel(file_path, sheet_name='一般休日')
     sheet4 = pd.read_excel(file_path, sheet_name='パターン内容', parse_dates=True)
-
-    current_year = 2025
 
     #Sheet 1
     information = extract_info_from_info_sheet(sheet1)
@@ -256,9 +251,6 @@ if __name__ == '__main__':
 
     master_schedule = {k: dict(v) for k, v in master_schedule.items()}
 
-    # with open("master_schedule.txt", "w", encoding="utf-8") as f:
-    #     json.dump(master_schedule, f, ensure_ascii=False, indent=4)
-
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=False, slow_mo=500,args=["--kiosk"])
         page = browser.new_page(viewport={"width": 1920, "height": 1080})
@@ -281,61 +273,63 @@ if __name__ == '__main__':
             input_locator.press("Enter")
             second_button = page.locator('a.ss_size.s_height.btn_gray:text-is("選択")').nth(1)
             second_button.click()
+            
+            for target_year in information['year']:
+                year_text = page.locator('section.ll_font').inner_text()
+                current_year = int(year_text.replace("年", "").strip())
+                button = page.locator('section.ico_position img.ico_ico_arrow')
 
-            for month in range(1,13):
-                current_calendar = page.locator('section.caeru_calendar_wrapper').filter(has=page.locator(f'span:text-is("{month}月")'))
-                tr_elements = current_calendar.locator('table tr')
-                tr_count = tr_elements.count()
-                # Lấy nội dung HTML từng <tr>
-                tr_html_list = [tr_elements.nth(i).inner_html() for i in range(1,tr_count)]
-                year_month = f"{current_year}-{month:02d}-"
-                weekends = (extract_weekend_days(tr_html_list,year_month))
-                schedule[current_year][month] = update_day_patterns(schedule[current_year][month], weekends)
+                clicks = generate_year_click_code(target_year = target_year, current_year = current_year)
+                if clicks != 0:
+                    exec(clicks)
 
-                with open("master_schedule.txt", "w", encoding="utf-8") as f:
-                    json.dump(schedule[current_year][month], f, ensure_ascii=False, indent=4)
-                # page.pause()
-                for type_day, list_type_days in schedule[current_year][month].items():
-                    try: 
-                        for leaves in list_type_days:
-                            day = leaves[-2:]
-                            day_cell = current_calendar.locator(f'td.pointable:text-is("{int(day)}")')
-                            if type_day == "red_days":
-                                day_cell.click()
-                            elif type_day == "blue_days":
-                                day_cell.dblclick()
-                    except Exception as e:
-                        print(f"Không có {type_day} ở tháng thứ {month}.Error: {e}")
+                for month in range(1,13):
+                    current_calendar = page.locator('section.caeru_calendar_wrapper').filter(has=page.locator(f'span:text-is("{month}月")'))
+                    tr_elements = current_calendar.locator('table tr')
+                    # Lấy nội dung HTML từng <tr>
+                    tr_html_list = [tr_elements.nth(i).inner_html() for i in range(1,tr_elements.count())]
+                    year_month = f"{target_year}-{month:02d}-"
+                    weekends = (extract_weekend_days(tr_html_list,year_month))
+                    schedule[target_year][month] = update_day_patterns(schedule[target_year][month], weekends)
 
-                # page.pause()
-                
-                calendar_html = current_calendar.inner_html()
-                td_list = extract_td_tags(calendar_html)[7:]
+                    # with open("master_schedule.txt", "w", encoding="utf-8") as f:
+                    #     json.dump(schedule[current_year][month], f, ensure_ascii=False, indent=4)
 
-                result = check_calendar_days(td_list, schedule, current_year, month)
+                    # page.pause()
 
-                if False in result:
-                    print(f"Tháng {month}: Error!")
-                    for index, day in enumerate(result):
-                        if day == False:
-                            print(f"Lỗi ở ngày {index+1}")
-                            current_error_day_status = td_list[index]
-                            # print(current_error_day_status)
-                            date_str = f"{current_year}-{month:02d}-{int(index+1):02d}"
-                            target = find_day_category(date_str, schedule[current_year][month])
-                            day_cell = current_calendar.locator(f'td.pointable:text-is("{int(index+1)}")')
-                            get_click_count(current_error_day_status, target)
-                            print(f"Đã sửa ngày {index+1} thành {target}")
-                            # print(target)
-                else:
-                    print(f"Tháng {month}: OK!")
+                    for type_day, list_type_days in schedule[target_year][month].items():
+                        try: 
+                            for leaves in list_type_days:
+                                day = leaves[-2:]
+                                day_cell = current_calendar.locator(f'td.pointable:text-is("{int(day)}")')
+                                if type_day == "red_days":
+                                    day_cell.click()
+                                elif type_day == "blue_days":
+                                    day_cell.dblclick()
+                        except Exception as e:
+                            print(f"Không có {type_day} ở tháng thứ {month}.Error: {e}")
 
-    #             #Fix calendar by AI
-    #             # temp_result = get_code_output(CHECK_PROMPT(td_list, schedule[current_year][month]))
-    #             # CODE = get_result_from_json(temp_result)
-    #             # print(f"CODE: {CODE}")
-            page.pause()
-    #             # Tìm và click vào nút 保存 bên trong tháng 1
-    #             save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
-    #             save_button.click()
+                    # page.pause()
+                    
+                    calendar_html = current_calendar.inner_html()
+                    td_list = extract_td_tags(calendar_html)[7:]
+                    result = check_calendar_days(td_list, schedule, target_year, month)
+
+                    if False in result:
+                        print(f"Tháng {month}: Error!")
+                        for index, day in enumerate(result):
+                            if day == False:
+                                print(f"Lỗi ở ngày {index+1}")
+                                current_error_day_status = td_list[index]
+                                date_str = f"{target_year}-{month:02d}-{int(index+1):02d}"
+                                target = find_day_category(date_str, schedule[target_year][month])
+                                day_cell = current_calendar.locator(f'td.pointable:text-is("{int(index+1)}")')
+                                get_click_count(current_error_day_status, target)
+                                print(f"Đã sửa ngày {index+1} thành {target}")
+                    else:
+                        print(f"Tháng {month}: OK!")
+
+                    save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
+                    save_button.click()
+                    page.pause()
 

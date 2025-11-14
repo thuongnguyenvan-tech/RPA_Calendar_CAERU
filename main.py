@@ -9,6 +9,7 @@ from itertools import islice
 from datetime import datetime
 from prompt import CHECK_PROMPT
 from bs4 import BeautifulSoup
+import ctypes
 
 def group_dates_by_year_month(date_list):
     result = defaultdict(lambda: defaultdict(list))
@@ -108,30 +109,114 @@ def get_click_count(td_html: str, target_status: str):
     else:
         return "Error!"
 
-if __name__ == '__main__':
-    ADMIN = "admin"
-    PASSWORD = "solomon"
-    URL = "https://test-newgps.caeru.biz/isuzu/"
+def extract_info_from_info_sheet(df):
+    """
+    Nhận df (kết quả pd.read_excel(..., sheet_name='情報'))
+    Trả về dict: {'URL': str, '管理者ID': str, 'password': str, 'year': [int,...]}
 
+    Nếu key không tồn tại, giá trị tương ứng là None.
+    """
+    # Chuẩn hoá: bỏ khoảng trắng ở tên cột nếu có
+    df = df.copy()
+    df.columns = [c.strip() for c in df.columns]
+
+    # Dùng set_index để lookup nhanh (nếu có duplicate, giữ first)
+    info_map = df.set_index('name')['value'].to_dict()
+
+    def get(key):
+        v = info_map.get(key)
+        if pd.isna(v):
+            return None
+        return str(v).strip()
+
+    # Lấy giá trị cơ bản
+    url = get('URL')
+    admin_id = get('管理者ID')
+    password = get('password')
+
+    # Xử lý year: trả về list số nguyên nếu có thể, ngược lại list chuỗi
+    raw_year = get('year')
+    years = None
+    if raw_year:
+        # tách theo dấu phẩy, space; loại bỏ rỗng
+        parts = [p.strip() for p in raw_year.replace('，', ',').split(',')]
+        parts = [p for p in parts if p]
+        parsed = []
+        for p in parts:
+            try:
+                parsed.append(int(p))
+            except ValueError:
+                parsed.append(p)  # giữ nguyên chuỗi nếu không parse được
+        years = parsed
+
+    return {
+        'URL': url,
+        '管理者ID': admin_id,
+        'password': password,
+        'year': years
+    }
+
+def extract_weekend_days(tr_html_list, year_month):
+    result = {"blue_days": [], "red_days": [], "black_days": []}
+
+    table = [] 
+    for tr_html in tr_html_list:
+        soup = BeautifulSoup(tr_html, "html.parser")
+        tds = soup.find_all("td")
+        row = []
+        for td in tds:
+            text = td.get_text(strip=True)
+            row.append(text)
+        table.append(row)
+    
+    for weekday in table[1:]:
+        for index, value in enumerate(weekday):
+            if value != '' and index == 0:
+                result["red_days"].append(f"{year_month}{int(weekday[index]):02d}")
+            if value != '' and index == 6:
+                result["blue_days"].append(f"{year_month}{int(weekday[index]):02d}")
+            if value != '' and index != 0 and index != 6:
+                result["black_days"].append(f"{year_month}{int(weekday[index]):02d}")
+    return result
+
+def update_day_patterns(A, B):
+
+    holidays = set(A.get("red_days", []))
+    leave_days = set(A.get("blue_days", []))
+    work_days = set(A.get("black_days", []))
+    sundays = set(B.get("red_days", []))
+    saturdays = set(B.get("blue_days", []))
+    normal_days = set(B.get("black_days", []))
+
+    # Cập nhật trực tiếp A
+    A["red_days"] = sorted((sundays | holidays) - work_days)
+    A["blue_days"] = sorted((saturdays | leave_days) - work_days - holidays)
+    A["black_days"] = sorted((normal_days | work_days)- leave_days - holidays) 
+
+    return A
+
+if __name__ == '__main__':
     file_path = "ISUZU_template.xlsx"
-    sheet1 = pd.read_excel(file_path, sheet_name='法定休日')
-    sheet2 = pd.read_excel(file_path, sheet_name='一般休日')
-    sheet3 = pd.read_excel(file_path, sheet_name='パターン内容', parse_dates=True)
+
+    sheet1 = pd.read_excel(file_path, sheet_name='情報')
+    sheet2 = pd.read_excel(file_path, sheet_name='法定休日')
+    sheet3 = pd.read_excel(file_path, sheet_name='一般休日')
+    sheet4 = pd.read_excel(file_path, sheet_name='パターン内容', parse_dates=True)
 
     current_year = 2025
 
     #Sheet 1
-    leave_schedule = group_dates_by_year_month(get_holidays_weekends(sheet1)["祝日"])
-    sunday_schedule = group_dates_by_year_month(get_holidays_weekends(sheet1)["日曜"])
-    saturday_schedule = group_dates_by_year_month(get_holidays_weekends(sheet1)["土曜"])
-    normal_schedule = group_dates_by_year_month(get_holidays_weekends(sheet1)["平日"])
+    information = extract_info_from_info_sheet(sheet1)
 
     #Sheet 2
-    sheet2['パターン選択'] = sheet2['パターン選択'].apply(circled_number_to_int)
-    areas = sheet2.set_index('勤務地ID')['パターン選択'].to_dict()
+    leave_schedule = group_dates_by_year_month(get_holidays_weekends(sheet2)["祝日"])
 
     #Sheet 3
-    butan_list = parse_pattern_sheet_numeric(sheet3)
+    sheet3['パターン選択'] = sheet3['パターン選択'].apply(circled_number_to_int)
+    areas = sheet3.set_index('勤務地ID')['パターン選択'].to_dict()
+
+    #Sheet 4
+    butan_list = parse_pattern_sheet_numeric(sheet4)
 
     #Final area list
     final_area_list = {k: butan_list[v] for k, v in areas.items()}
@@ -142,10 +227,8 @@ if __name__ == '__main__':
 
     for area_id, pattern_data in final_area_list.items():
         master_schedule[area_id] = defaultdict(lambda: defaultdict(dict))
-
         for year in leave_schedule.keys():
             for month in range(1, 13):
-                normal_days = normal_schedule.get(year, {}).get(month, [])
                 leave_days = [
                         day for day in pattern_data.get("休日", [])
                         if datetime.strptime(day, "%Y-%m-%d").year == year and
@@ -157,44 +240,35 @@ if __name__ == '__main__':
                         datetime.strptime(day, "%Y-%m-%d").month == month
                     ]
                 
-                saturdays = saturday_schedule.get(year, {}).get(month, [])
-                sundays = sunday_schedule.get(year, {}).get(month, [])
                 holidays = leave_schedule.get(year, {}).get(month, [])
 
-                red_days = sorted((set(sundays) | set(holidays)) - set(work_days))
+                red_days = sorted(set(holidays))
 
-                blue_days = sorted((set(saturdays) | set(leave_days)) - set(work_days))
+                blue_days = sorted(set(leave_days))
 
-                common_days = list(set(leave_days) & set(normal_days))
-
-                black_days = sorted(set(normal_days) - set(common_days) | set(work_days))
+                black_days = sorted(set(work_days))
 
                 master_schedule[area_id][year][month] = {
                     "red_days": red_days,
                     "blue_days": blue_days,
                     "black_days": black_days
                 }
-                
+
     master_schedule = {k: dict(v) for k, v in master_schedule.items()}
 
-    with open("master_schedule.txt", "w", encoding="utf-8") as f:
-        json.dump(master_schedule, f, ensure_ascii=False, indent=4)
+    # with open("master_schedule.txt", "w", encoding="utf-8") as f:
+    #     json.dump(master_schedule, f, ensure_ascii=False, indent=4)
 
     with sync_playwright() as playwright:
-        browser = playwright.firefox.launch(headless=False, slow_mo=500,args=["--start-maximized"])
+        browser = playwright.chromium.launch(headless=False, slow_mo=500,args=["--kiosk"])
         page = browser.new_page(viewport={"width": 1920, "height": 1080})
-        page.goto(URL, wait_until='domcontentloaded')
-        page.fill('input[name="presentation_id"]', ADMIN)
-        page.fill('input[name="password"]', PASSWORD)
+
+        page.goto(information['URL'], wait_until='domcontentloaded')
+        page.fill('input[name="presentation_id"]', information['管理者ID'])
+        page.fill('input[name="password"]', information['password'])
         page.click('button:has-text("ログイン")')
         page.wait_for_load_state("domcontentloaded")
-        page.goto(URL + "calendar", wait_until="domcontentloaded")
-
-        # #Click AREA tổng quát
-        # page.click('p.button > a.btn_gray:nth-of-type(1)')
-        # page.wait_for_timeout(3000)
-
-        master_schedule = dict(islice(master_schedule.items(), 5))
+        page.goto(information['URL'] + "calendar", wait_until="domcontentloaded")
 
         first_loop = True
         for area_ID, schedule in master_schedule.items():
@@ -209,9 +283,20 @@ if __name__ == '__main__':
             second_button.click()
 
             for month in range(1,13):
+                current_calendar = page.locator('section.caeru_calendar_wrapper').filter(has=page.locator(f'span:text-is("{month}月")'))
+                tr_elements = current_calendar.locator('table tr')
+                tr_count = tr_elements.count()
+                # Lấy nội dung HTML từng <tr>
+                tr_html_list = [tr_elements.nth(i).inner_html() for i in range(1,tr_count)]
+                year_month = f"{current_year}-{month:02d}-"
+                weekends = (extract_weekend_days(tr_html_list,year_month))
+                schedule[current_year][month] = update_day_patterns(schedule[current_year][month], weekends)
+
+                with open("master_schedule.txt", "w", encoding="utf-8") as f:
+                    json.dump(schedule[current_year][month], f, ensure_ascii=False, indent=4)
+                # page.pause()
                 for type_day, list_type_days in schedule[current_year][month].items():
                     try: 
-                        current_calendar = page.locator('section.caeru_calendar_wrapper').filter(has=page.locator(f'span:text-is("{month}月")'))
                         for leaves in list_type_days:
                             day = leaves[-2:]
                             day_cell = current_calendar.locator(f'td.pointable:text-is("{int(day)}")')
@@ -220,7 +305,7 @@ if __name__ == '__main__':
                             elif type_day == "blue_days":
                                 day_cell.dblclick()
                     except Exception as e:
-                        print(f"Không có {type_day} ở tháng thứ {month}")
+                        print(f"Không có {type_day} ở tháng thứ {month}.Error: {e}")
 
                 # page.pause()
                 
@@ -245,12 +330,12 @@ if __name__ == '__main__':
                 else:
                     print(f"Tháng {month}: OK!")
 
-                #Fix calendar by AI
-                # temp_result = get_code_output(CHECK_PROMPT(td_list, schedule[current_year][month]))
-                # CODE = get_result_from_json(temp_result)
-                # print(f"CODE: {CODE}")
-                page.pause()
-                # Tìm và click vào nút 保存 bên trong tháng 1
-                save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
-                save_button.click()
+    #             #Fix calendar by AI
+    #             # temp_result = get_code_output(CHECK_PROMPT(td_list, schedule[current_year][month]))
+    #             # CODE = get_result_from_json(temp_result)
+    #             # print(f"CODE: {CODE}")
+            page.pause()
+    #             # Tìm và click vào nút 保存 bên trong tháng 1
+    #             save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
+    #             save_button.click()
 

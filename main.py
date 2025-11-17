@@ -10,6 +10,9 @@ from datetime import datetime
 from prompt import CHECK_PROMPT
 from bs4 import BeautifulSoup
 import ctypes
+from openpyxl import Workbook, load_workbook
+import os
+import time
 
 def group_dates_by_year_month(date_list):
     result = defaultdict(lambda: defaultdict(list))
@@ -67,10 +70,8 @@ def check_calendar_days(calendar_html, schedule, current_year, month):
         if not day_text.isdigit():
             results.append(False)
             continue
-
         date_str = f"{current_year}-{month:02d}-{int(day_text):02d}"
         classes = td.get('class', [])
-
         if "pink_holiday" in classes:
             results.append(date_str in schedule[current_year][month]['red_days'])
         elif "blue_holiday" in classes:
@@ -119,17 +120,14 @@ def extract_info_from_info_sheet(df):
         if pd.isna(v):
             return None
         return str(v).strip()
-
-    # Lấy giá trị cơ bản
+    
     url = get('URL')
     admin_id = get('管理者ID')
     password = get('password')
 
-    # Xử lý year: trả về list số nguyên nếu có thể, ngược lại list chuỗi
     raw_year = get('year')
     years = None
     if raw_year:
-        # tách theo dấu phẩy, space; loại bỏ rỗng
         parts = [p.strip() for p in raw_year.replace('，', ',').split(',')]
         parts = [p for p in parts if p]
         parsed = []
@@ -137,7 +135,7 @@ def extract_info_from_info_sheet(df):
             try:
                 parsed.append(int(p))
             except ValueError:
-                parsed.append(p)  # giữ nguyên chuỗi nếu không parse được
+                parsed.append(p)
         years = parsed
 
     return {
@@ -192,16 +190,46 @@ def generate_year_click_code(target_year: int, current_year: int):
         clicks = "\n".join(["button.first.click()" for _ in range(abs(diff))])
     return clicks
 
+def create_sheet_result_output(file_path: str,years):
+    # Mở file để append
+    wb = load_workbook(file_path)
+    # Nếu sheet không tồn tại → tạo mới
+    if "result" not in wb.sheetnames:
+        wb.create_sheet("result")
+    else:
+        del wb["result"]
+        wb.create_sheet("result")
+    ws = wb["result"]
+    ws.append(["勤務地名", "勤務地ID", "パターン選択"] + years)
+    # Lưu file
+    wb.save(file_path)
+
+def add_row_sheet_result_output(file_path,rows):
+    wb = load_workbook(file_path)
+    ws = wb["result"]
+    ws.append(rows)
+    wb.save(file_path)
+
+def add_block_sheet_result_output(file_path, row, column, value):
+    wb = load_workbook(file_path)
+    ws = wb["result"]
+    ws.cell(row=row, column=column, value=value)
+    wb.save(file_path)
+
 if __name__ == '__main__':
     file_path = "ISUZU_template.xlsx"
-
-    sheet1 = pd.read_excel(file_path, sheet_name='情報')
-    sheet2 = pd.read_excel(file_path, sheet_name='法定休日')
-    sheet3 = pd.read_excel(file_path, sheet_name='一般休日')
-    sheet4 = pd.read_excel(file_path, sheet_name='パターン内容', parse_dates=True)
+    error = ""
+    try:
+        sheet1 = pd.read_excel(file_path, sheet_name='情報')
+        sheet2 = pd.read_excel(file_path, sheet_name='法定休日')
+        sheet3 = pd.read_excel(file_path, sheet_name='一般休日')
+        sheet4 = pd.read_excel(file_path, sheet_name='パターン内容', parse_dates=True)
+    except Exception as e:
+        print(f"Không thể mở file {file_path}.")
 
     #Sheet 1
     information = extract_info_from_info_sheet(sheet1)
+    create_sheet_result_output(file_path = file_path, years = information['year'])
 
     #Sheet 2
     leave_schedule = group_dates_by_year_month(get_holidays_weekends(sheet2)["祝日"])
@@ -209,6 +237,7 @@ if __name__ == '__main__':
     #Sheet 3
     sheet3['パターン選択'] = sheet3['パターン選択'].apply(circled_number_to_int)
     areas = sheet3.set_index('勤務地ID')['パターン選択'].to_dict()
+    kinmuchi = sheet3.set_index('勤務地ID')['勤務地名'].to_dict()
 
     #Sheet 4
     butan_list = parse_pattern_sheet_numeric(sheet4)
@@ -263,7 +292,14 @@ if __name__ == '__main__':
         page.goto(information['URL'] + "calendar", wait_until="domcontentloaded")
 
         first_loop = True
+        row = 2
+
+        #TODO: Thêm bước xác nhận nhập account có đúng không ở đây
+
         for area_ID, schedule in master_schedule.items():
+            # area_ID = "S02000"
+            column = 4
+            add_row_sheet_result_output(file_path, [kinmuchi.get(area_ID), area_ID, areas.get(area_ID)])
             if not first_loop:
                 page.locator('a.modal-open.btn_gray', has_text="変更").click()
             else:
@@ -271,10 +307,18 @@ if __name__ == '__main__':
             input_locator = page.locator('div.search_setting:has(span:text-is("勤務地ID")) input')
             input_locator.fill(area_ID)
             input_locator.press("Enter")
-            second_button = page.locator('a.ss_size.s_height.btn_gray:text-is("選択")').nth(1)
+            try:
+                second_button = page.locator('a.ss_size.s_height.btn_gray:text-is("選択")').nth(1)
+            except Exception as e:
+                add_block_sheet_result_output(file_path =file_path, row = row, column = column, value = f"Không có mã kinmuchi {area_ID}")
+                print(f"Không có mã kinmuchi {area_ID}")
+                first_loop = True
+                row += 1
+                continue
             second_button.click()
             
             for target_year in information['year']:
+                # target_year = 2026
                 year_text = page.locator('section.ll_font').inner_text()
                 current_year = int(year_text.replace("年", "").strip())
                 button = page.locator('section.ico_position img.ico_ico_arrow')
@@ -282,8 +326,12 @@ if __name__ == '__main__':
                 clicks = generate_year_click_code(target_year = target_year, current_year = current_year)
                 if clicks != 0:
                     exec(clicks)
+                page.wait_for_load_state("domcontentloaded")
+                time.sleep(2)
+                error_months = []
 
                 for month in range(1,13):
+                    # month = 1
                     current_calendar = page.locator('section.caeru_calendar_wrapper').filter(has=page.locator(f'span:text-is("{month}月")'))
                     tr_elements = current_calendar.locator('table tr')
                     # Lấy nội dung HTML từng <tr>
@@ -293,9 +341,7 @@ if __name__ == '__main__':
                     schedule[target_year][month] = update_day_patterns(schedule[target_year][month], weekends)
 
                     # with open("master_schedule.txt", "w", encoding="utf-8") as f:
-                    #     json.dump(schedule[current_year][month], f, ensure_ascii=False, indent=4)
-
-                    # page.pause()
+                    #     json.dump(schedule[target_year][month], f, ensure_ascii=False, indent=4)
 
                     for type_day, list_type_days in schedule[target_year][month].items():
                         try: 
@@ -308,8 +354,6 @@ if __name__ == '__main__':
                                     day_cell.dblclick()
                         except Exception as e:
                             print(f"Không có {type_day} ở tháng thứ {month}.Error: {e}")
-
-                    # page.pause()
                     
                     calendar_html = current_calendar.inner_html()
                     td_list = extract_td_tags(calendar_html)[7:]
@@ -326,10 +370,16 @@ if __name__ == '__main__':
                                 day_cell = current_calendar.locator(f'td.pointable:text-is("{int(index+1)}")')
                                 get_click_count(current_error_day_status, target)
                                 print(f"Đã sửa ngày {index+1} thành {target}")
+                        
                     else:
                         print(f"Tháng {month}: OK!")
-
-                    save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
-                    save_button.click()
-                    page.pause()
+                if len(error_months) != 0:
+                    add_block_sheet_result_output(file_path =file_path, row = row, column = column, value = "Error with " + ", ".join(map(str, error_months)))
+                else:
+                    add_block_sheet_result_output(file_path =file_path, row = row, column = column, value = "Done 12 months without error !")
+                column += 1
+            row += 1
+                    # save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
+                    # save_button.click()
+                    # page.pause()
 

@@ -343,18 +343,22 @@ if __name__ == '__main__':
                     # with open("master_schedule.txt", "w", encoding="utf-8") as f:
                     #     json.dump(schedule[target_year][month], f, ensure_ascii=False, indent=4)
 
-                    for type_day, list_type_days in schedule[target_year][month].items():
-                        try: 
-                            for leaves in list_type_days:
-                                day = leaves[-2:]
-                                day_cell = current_calendar.locator(f'td.pointable:text-is("{int(day)}")')
-                                if type_day == "red_days":
-                                    day_cell.click()
-                                elif type_day == "blue_days":
-                                    day_cell.dblclick()
-                        except Exception as e:
-                            print(f"Không có {type_day} ở tháng thứ {month}.Error: {e}")
-                    
+                    calendar_html = current_calendar.inner_html()
+                    td_list = extract_td_tags(calendar_html)[7:]
+
+                    if "pink_holiday" not in "".join(td_list) and "pink_holiday" not in "".join(td_list):
+                        for type_day, list_type_days in schedule[target_year][month].items():
+                            try: 
+                                for leaves in list_type_days:
+                                    day = leaves[-2:]
+                                    day_cell = current_calendar.locator(f'td.pointable:text-is("{int(day)}")')
+                                    if type_day == "red_days":
+                                        day_cell.click()
+                                    elif type_day == "blue_days":
+                                        day_cell.dblclick()
+                            except Exception as e:
+                                print(f"Không có {type_day} ở tháng thứ {month}.Error: {e}")
+
                     calendar_html = current_calendar.inner_html()
                     td_list = extract_td_tags(calendar_html)[7:]
                     result = check_calendar_days(td_list, schedule, target_year, month)
@@ -377,7 +381,7 @@ if __name__ == '__main__':
                     save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
                     save_button.click()
                     page.wait_for_load_state("domcontentloaded")
-                    # page.pause()
+                    page.pause()
                 
                 if len(error_months) != 0:
                     add_block_sheet_result_output(file_path =file_path, row = row, column = column, value = "Error with " + ", ".join(map(str, error_months)))

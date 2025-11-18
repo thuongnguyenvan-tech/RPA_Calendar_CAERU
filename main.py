@@ -373,13 +373,19 @@ if __name__ == '__main__':
                         
                     else:
                         print(f"Tháng {month}: OK!")
+
+                    save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
+                    save_button.click()
+                    page.wait_for_load_state("domcontentloaded")
+                    # page.pause()
+                
                 if len(error_months) != 0:
                     add_block_sheet_result_output(file_path =file_path, row = row, column = column, value = "Error with " + ", ".join(map(str, error_months)))
                 else:
                     add_block_sheet_result_output(file_path =file_path, row = row, column = column, value = "Done 12 months without error !")
+                    
                 column += 1
+                # page.pause()
             row += 1
-                    # save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
-                    # save_button.click()
-                    # page.pause()
+
 

@@ -23,7 +23,7 @@ from datetime import datetime
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
-        MainWindow.resize(800, 200)
+        MainWindow.resize(800, 250)
         self.centralwidget = QtWidgets.QWidget(MainWindow)
         self.centralwidget.setObjectName("centralwidget")
         self.formLayoutWidget = QtWidgets.QWidget(self.centralwidget)
@@ -37,9 +37,12 @@ class Ui_MainWindow(object):
         self.label = QtWidgets.QLabel(self.formLayoutWidget)
         self.label.setObjectName("label")
         self.horizontalLayout.addWidget(self.label)
+        self.verticalLayout = QtWidgets.QVBoxLayout()
+        self.verticalLayout.setObjectName("verticalLayout")
         self.pushButton = QtWidgets.QPushButton(self.formLayoutWidget)
         self.pushButton.setObjectName("pushButton")
-        self.horizontalLayout.addWidget(self.pushButton)
+        self.verticalLayout.addWidget(self.pushButton)
+        self.horizontalLayout.addLayout(self.verticalLayout)
         self.formLayout.setLayout(0, QtWidgets.QFormLayout.FieldRole, self.horizontalLayout)
         self.horizontalLayout_2 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_2.setObjectName("horizontalLayout_2")
@@ -49,7 +52,7 @@ class Ui_MainWindow(object):
         self.label_3 = QtWidgets.QLabel(self.formLayoutWidget)
         self.label_3.setObjectName("label_3")
         self.horizontalLayout_2.addWidget(self.label_3)
-        self.formLayout.setLayout(1, QtWidgets.QFormLayout.FieldRole, self.horizontalLayout_2)
+        self.formLayout.setLayout(2, QtWidgets.QFormLayout.FieldRole, self.horizontalLayout_2)
         self.verticalLayout_2 = QtWidgets.QVBoxLayout()
         self.verticalLayout_2.setObjectName("verticalLayout_2")
         self.label_6 = QtWidgets.QLabel(self.formLayoutWidget)
@@ -58,7 +61,7 @@ class Ui_MainWindow(object):
         self.label_7 = QtWidgets.QLabel(self.formLayoutWidget)
         self.label_7.setObjectName("label_7")
         self.verticalLayout_2.addWidget(self.label_7)
-        self.formLayout.setLayout(2, QtWidgets.QFormLayout.FieldRole, self.verticalLayout_2)
+        self.formLayout.setLayout(3, QtWidgets.QFormLayout.FieldRole, self.verticalLayout_2)
         self.verticalLayout_3 = QtWidgets.QVBoxLayout()
         self.verticalLayout_3.setObjectName("verticalLayout_3")
         self.label_8 = QtWidgets.QLabel(self.formLayoutWidget)
@@ -79,7 +82,18 @@ class Ui_MainWindow(object):
         self.pushButton_4.setObjectName("pushButton_4")
         self.horizontalLayout_3.addWidget(self.pushButton_4)
         self.verticalLayout_3.addLayout(self.horizontalLayout_3)
-        self.formLayout.setLayout(3, QtWidgets.QFormLayout.FieldRole, self.verticalLayout_3)
+        self.formLayout.setLayout(4, QtWidgets.QFormLayout.FieldRole, self.verticalLayout_3)
+        self.horizontalLayout_4 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_4.setObjectName("horizontalLayout_4")
+        self.label_2 = QtWidgets.QLabel(self.formLayoutWidget)
+        self.label_2.setObjectName("label_2")
+        self.horizontalLayout_4.addWidget(self.label_2)
+        self.comboBox = QtWidgets.QComboBox(self.formLayoutWidget)
+        self.comboBox.setObjectName("comboBox")
+        self.comboBox.addItem("")
+        self.comboBox.addItem("")
+        self.horizontalLayout_4.addWidget(self.comboBox)
+        self.formLayout.setLayout(1, QtWidgets.QFormLayout.FieldRole, self.horizontalLayout_4)
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QtWidgets.QMenuBar(MainWindow)
         self.menubar.setGeometry(QtCore.QRect(0, 0, 800, 22))
@@ -105,7 +119,9 @@ class Ui_MainWindow(object):
         self.pushButton_2.setText(_translate("MainWindow", "Start"))
         self.pushButton_3.setText(_translate("MainWindow", "Stop"))
         self.pushButton_4.setText(_translate("MainWindow", "Exit"))
-        # self.pushButton.clicked.connect(self.upload_file)
+        self.label_2.setText(_translate("MainWindow", "Headless:"))
+        self.comboBox.setItemText(0, _translate("MainWindow", "True"))
+        self.comboBox.setItemText(1, _translate("MainWindow", "False"))
         self.pushButton.clicked.connect(lambda: self.upload_file(MainWindow))
         self.pushButton_4.clicked.connect(QtWidgets.QApplication.quit)
         self.pushButton_2.clicked.connect(self.click_start)
@@ -121,7 +137,6 @@ class Ui_MainWindow(object):
             initialFilter="Excel Files (*.xlsx *.csv)"
         )
         if self.file_path:
-            print("Selected:", self.file_path)
             self.label.setText(self.file_path)
     def enable_buttons(self):
         self.pushButton_2.setEnabled(True)
@@ -134,7 +149,8 @@ class Ui_MainWindow(object):
         self.pushButton_4.setEnabled(False)
         self.pushButton_2.setEnabled(False)
         self.pushButton.setEnabled(False)
-        self.worker = Playwright(self.file_path)
+        self.headless = self.comboBox.currentText()
+        self.worker = Playwright(self.file_path, self.headless)
         self.worker.error.connect(self.on_error)
         self.worker.current_step.connect(self.on_current_step)
         self.worker.status.connect(self.on_status)
@@ -173,9 +189,10 @@ class Playwright(QtCore.QThread):
     status = QtCore.pyqtSignal(str) 
     button = QtCore.pyqtSignal() 
 
-    def __init__(self, file_path, parent=None):
+    def __init__(self, file_path, headless, parent=None):
         super().__init__(parent)
         self.file_path = file_path
+        self.headless = headless
         self._is_running = True
 
 
@@ -267,12 +284,7 @@ class Playwright(QtCore.QThread):
         target_idx = states.index(target_status)
 
         clicks = (target_idx - current_idx) % len(states)
-        if clicks == 1:
-            return day_cell.click()
-        elif clicks == 2:
-            return day_cell.dblclick()
-        else:
-            return "Error!"
+        return clicks
 
     def extract_info_from_info_sheet(self, df):
         df = df.copy()
@@ -524,7 +536,8 @@ class Playwright(QtCore.QThread):
 
         self.current_step.emit("Login")
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=False, slow_mo=500,args=["--kiosk"])
+            headless_bool = (self.headless == "True")
+            browser = playwright.chromium.launch(headless=headless_bool, slow_mo=500,args=["--kiosk"])
             page = browser.new_page(viewport={"width": 1920, "height": 1080})
             page.goto(information['URL'], wait_until='domcontentloaded')
             try:
@@ -584,12 +597,14 @@ class Playwright(QtCore.QThread):
 
                     for month in range(1,13):
                         error_found = False
+
                         if self._is_running == False:
                             return
                         self.current_step.emit(f"Checking 勤務地名{area_ID} - year {target_year} - month {month}")
                         # month = 1
                         current_calendar = page.locator('section.caeru_calendar_wrapper').filter(has=page.locator(f'span:text-is("{month}月")'))
                         tr_elements = current_calendar.locator('table tr')
+
                         # Lấy nội dung HTML từng <tr>
                         tr_html_list = [tr_elements.nth(i).inner_html() for i in range(1,tr_elements.count())]
                         year_month = f"{target_year}-{month:02d}-"
@@ -601,8 +616,10 @@ class Playwright(QtCore.QThread):
 
                         calendar_html = current_calendar.inner_html()
                         td_list = self.extract_td_tags(calendar_html)[7:]
+                        
+                        not_done_before = "pink_holiday" not in "".join(td_list) and "pink_holiday" not in "".join(td_list)
 
-                        if "pink_holiday" not in "".join(td_list) and "pink_holiday" not in "".join(td_list):
+                        if not_done_before:
                             for type_day, list_type_days in schedule[target_year][month].items():
                                 try: 
                                     for leaves in list_type_days:
@@ -633,15 +650,20 @@ class Playwright(QtCore.QThread):
                                     date_str = f"{target_year}-{month:02d}-{int(index+1):02d}"
                                     target = self.find_day_category(date_str, schedule[target_year][month])
                                     day_cell = current_calendar.locator(f'td.pointable:text-is("{int(index+1)}")')
-                                    self.get_click_count(current_error_day_status, target)
+                                    clicks = self.get_click_count(current_error_day_status, target)
+                                    if clicks == 1:
+                                        day_cell.click()
+                                    elif clicks == 2:
+                                        day_cell.dblclick()
                                     print(f"Đã sửa ngày {index+1} thành {target}")
                             
                         else:
                             print(f"Tháng {month}: OK!")
 
-                        save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
-                        save_button.click()
-                        page.wait_for_load_state("domcontentloaded")
+                        if not not_done_before and (False in result):
+                            save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
+                            save_button.click()
+                            page.wait_for_load_state("domcontentloaded")
                     
                     if len(error_months) != 0:
                         self.add_block_sheet_result_output(file_path =self.file_path, row = row, column = column, value = "Error with " + ", ".join(map(str, error_months)))

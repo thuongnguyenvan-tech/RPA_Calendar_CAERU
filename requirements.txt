@@ -3,3 +3,4 @@ openai==0.28
 pandas
 openpyxl
 beautifulsoup4
+PyQt5

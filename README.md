@@ -1,4 +1,4 @@
-# RPA_Calendar_CAERU
+# RPA_Calendar_CAERU (Ubuntu)
 pip install virtualenv  
 virtualenv env  
 source env/bin/activate  

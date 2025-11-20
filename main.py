@@ -351,7 +351,7 @@ class Playwright(QtCore.QThread):
         normal_days = set(B.get("black_days", []))
         A["red_days"] = sorted((sundays | holidays) - work_days)
         A["blue_days"] = sorted((saturdays | leave_days) - work_days - holidays)
-        A["black_days"] = sorted((normal_days | work_days)- leave_days - holidays) 
+        A["black_days"] = sorted((normal_days - leave_days - holidays) | work_days)
         return A
 
     def generate_year_click_code(self, target_year, current_year):
@@ -563,7 +563,7 @@ class Playwright(QtCore.QThread):
 
 
             for area_ID, schedule in master_schedule.items():
-                # area_ID = "S02000"
+                # area_ID = "S02008"
                 column = 4
                 self.add_row_sheet_result_output(self.file_path, [kinmuchi.get(area_ID), area_ID, areas.get(area_ID)])
                 if not first_loop:
@@ -611,8 +611,8 @@ class Playwright(QtCore.QThread):
                         weekends = (self.extract_weekend_days(tr_html_list,year_month))
                         schedule[target_year][month] = self.update_day_patterns(schedule[target_year][month], weekends)
 
-                        # with open("master_schedule.txt", "w", encoding="utf-8") as f:
-                        #     json.dump(schedule[target_year][month], f, ensure_ascii=False, indent=4)
+                        with open("master_schedule.txt", "w", encoding="utf-8") as f:
+                            json.dump(schedule[target_year][month], f, ensure_ascii=False, indent=4)
 
                         calendar_html = current_calendar.inner_html()
                         td_list = self.extract_td_tags(calendar_html)[7:]
@@ -664,12 +664,15 @@ class Playwright(QtCore.QThread):
                             save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
                             save_button.click()
                             page.wait_for_load_state("domcontentloaded")
+                        if not_done_before:
+                            save_button = current_calendar.locator('a.btn_greeen:has-text("保存")')
+                            save_button.click()
+                            page.wait_for_load_state("domcontentloaded")
                     
                     if len(error_months) != 0:
                         self.add_block_sheet_result_output(file_path =self.file_path, row = row, column = column, value = "Error with " + ", ".join(map(str, error_months)))
                     else:
                         self.add_block_sheet_result_output(file_path =self.file_path, row = row, column = column, value = "Done 12 months without error !")
-                        
                     column += 1
 
                 row += 1
